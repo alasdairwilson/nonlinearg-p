@@ -1,0 +1,36 @@
+&datin
+lt=600 mt=600 nt=2000000 nprint=20 mu=0.15d0 
+
+nr=1 noff = 200 wamp = 0.5d0 amp = 0.00d0 fr=87.394d0 decx=300 dect=0.0d0 m1=1  m2=599 
+
+pelletrate = 1.d-3
+
+code = 'b' fdamp = 'sigma200.in'
+
+ionise = 0 emin = 1.d-3
+
+boundmin = 1.0d-7 
+
+beta = 1.0d0 dpodg = 1.d0 frac = 0.1d0 bxo=1.d0 byo=0.d0
+
+experiment = 'spbombg'
+
+spbombamp = 0.5d0
+
+asigma=3d-1 bsigma=0.05
+/
+
+
+various drivers can be selected using the 'experiment' variable details of these are below
+----------------------------------
+experiment = spbombg : a spherically symmetrical gaussian density placed in the gas
+experiment = spbombp : a spherically symmetrical gaussian density placed in the plasma
+experiment = spbombb : both spbombp+g
+
+these have amplitude controlled by spbombamp and require the readin file spbomb.in which defines the shape of the gaussian
+-----------------------------------
+
+-----------------------------------
+experiment = planewl : an infinite wave driven on the left edge moving right
+
+spatial extent for these is given by m1,m2 turn off time by noff, exponential envelope decay scale by decx, frequency by fr, amplitude by damp,

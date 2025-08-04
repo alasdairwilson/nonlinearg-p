@@ -1,0 +1,295 @@
+      Program nonlinp
+       
+      Include 'nonlinp.inc'
+
+! This program is a non-linear finite difference solver for use in numerical MHD. The program initialisies in initialise, has a finite difference solver in solve (which can be switched out to various schemes) and a function for calculation the flux functions in flux (in all 3 dimensions) for MHD. Data is written out by function ritout. The program is exited in wrapup. Initial plan is to write it in 3-d but with 3-d functionality disabled, to see how well it runs before tackling harder problems.
+!---------------------------------------------------------------
+!our variables in MHD are stored in tensor uu(*,-,-,-,-):
+! 1 - density
+! 2 - vx
+! 3 - vy
+! 4 - vz
+! 5 - energy
+! 6 - bx
+! 7 - by
+! 8 - bz
+
+
+!for the solve current time is indexed  second in uu(-,*,-,-,-)
+!0 - current, n
+!1 - predictor half step
+!2 - next, n+1
+
+!For 2d and 3d the dimensions are next in uu (-,-,*,*,*) for x,y,z respectively
+!---------------------------------------------------------------
+      call initialise
+      
+      call solve
+
+      call wrapup
+
+      end
+!---------------------------------------------------------------
+
+      Subroutine initialise
+       
+      Include 'nonlinp.inc'
+
+
+       filnam(1)='agwx .out'
+       filnam(2)='agwz .out'
+       filnam(3)='agvx .out'
+       filnam(4)='agvz .out'
+       filnam(5)='agbx .out'
+       filnam(6)='agbz .out'
+       filnam(7)='debg .out'
+       filnam(8)='agro .out'
+       filnam(9)='agpd .out'
+!First load in data from datin file.
+       open(10,file='nonlinp.in', status='old')
+
+           
+       rewind(10)
+       read(10,datin)
+       write(6,datin)
+       write(6,*) 'Input complete','lt=',lt,'mt=',mt
+
+!In this subroutine the matrices of initial values are initialised. Functionality to use input files for initial values should be added. For now they are set in this code.
+
+!for the plasma
+      do l = 0,lt+1
+
+!density set first
+       do m = 0,mt+1
+         uu(1,l,m,0) = 1.0d0
+
+!then the rest
+        do i =  2,8
+         uu(i,l,m,0) = 0.0d0
+        end do
+       end do
+      end do
+
+
+
+      end
+
+!--------------------------------------------------------------
+
+      Subroutine Solve
+       
+      Include 'nonlinp.inc'
+!This subroutine contains the finite difference solver. The richtmyer two-step scheme in 3 dimensions is used, this can be swapped out for any scheme that also only requires the flux functions, call the flux functions.
+
+      do n = 1,nt
+!looping over timesteps
+
+!first the predictor lax step.
+!calculate flux functions for all l,m at t = n
+!not sure if necessary but set temp array to be current step, will reuse for corrector step, can alsu write two flux functions accessing different time indices of uu will see.
+      tt(:,:,:) =  uu(:,0,:,:)
+      call flux(tt)
+!Next the lax predictor step itself we use t =  1 for the predicted half-step
+
+      do i = 1,8
+!loop the variables and spatial dimensions
+	do l = 1,lt
+	  do m = 1, mt
+	lp = l + 1
+	lm = l - 1
+        mp = m + 1
+        mm = m - 1
+
+        uu(i,1,l,m) = 0.5d0*(0.5d0* (uu(i,0,lp,m) + uu(i,0,lm,m) +
+     & uu(i,0,l,mp) + uu(i,0,l,mm))) -
+     & 0.25d0*mu*( ff(i,lp,m) - ff(i,lm,m) + gg(i,l,mp) - gg(i,l,mm))
+
+           end do
+         end do   
+       end do
+
+
+!call the flux function  on the half timestep 
+
+      tt(:,:,:) =  uu(:,1,:,:)
+      call flux(tt)
+
+!next the leapfrog corrector step to update uu to the full timestep  
+      do i = 1,8
+!loop the variables and spatial dimensions
+	do l = 1,lt
+	  do m = 1, mt
+	lp = l + 1
+	lm = l - 1
+        mp = m + 1
+        mm = m - 1
+
+       uu(i,2,l,m)  = uu(i,0,l,m) - 0.5d0*mu*(ff(i,lp,m) - 
+     & ff(i,lm,m) + gg(i,l,mp) - gg(i,l,mm))
+          end do
+        end do
+       end do
+! next we copy the new timestep to the current in order for us to start over again.
+       uu(:,0,:,:) = uu(:,2,:,:)
+
+!  finally we extrapolate with a polynomial to the edge points
+      call extrap
+
+      end do
+      end
+!-------------------------------------------------------------
+
+      Subroutine Flux(tt)
+       
+      Include 'nonlinp.inc'
+!This subroutines calculates (up to 3) flux functions based on the suuplied values of uu.
+!F = x
+!G = y
+!H = z if needed
+      
+
+!first calculate energy pressure and v.b for use in the flux functions.
+       call press(tt)
+       call energy(tt)
+       bdotv(:,:)= tt(2,:,:)*tt(6,:,:) + tt(3,:,:)*tt(7,:,:)
+       
+!The flux functions for ideal MHD:
+
+! Flux in x direction, ff. third dimension commented out for now.
+! drho/dt = rho * dvx  /dx
+       ff(1,:,:) = tt(1,:,:) * tt(2,:,:)
+!dvx/dtx = rho*vx^2 - bx^2 + Ptot /dx
+       ff(2,:,:) = tt(1,:,:)*tt(2,:,:)**2 - tt(6,:,:)**2
+     &  + Ptot(:,:)
+!dvy/dtx = rho* vxvy - bxby
+       ff(3,:,:) =  tt(1,:,:)*tt(2,:,:)*tt(3,:,:) - tt(6,:,:)*tt(7,:,:)
+!dvz/dtx = rho*vxvz - bxbz
+!      ff(4,:,:) = tt(1,:,:)*tt(2,:,:)*tt(4,:,:) - tt(6,:,:)*tt(8,:,:)
+!dE/dtx  = (E+Ptot)vx - bx*(b.v)
+       
+       ff(5,:,:) = (etot(:,:)+ptot(:,:)) * tt(2,:,:) - tt(6,:,:)*bdotv
+!dbx/dtx = 0
+       ff(6,:,:) = 0
+!dby/dtx = vxby - vybx
+       ff(7,:,:) = tt(2,:,:)*tt(7,:,:) - tt(3,:,:)*tt(6,:,:)
+!dbz/dtx = -(vybz - vzby)
+!      ff(8,:,:) = -(tt(3,:,:)*tt(8,:,:) - tt(4,:,:)*tt(7,:,:))
+
+
+!Flux in the Y direction, gg. z terms commented out for now 
+
+!drho/dty =  rho*vy
+       gg(1,:,:) = tt(1,:,:)*tt(3,:,:)
+!dvx/dty  = rho(v1v2) - b1b2
+       gg(2,:,:) = tt(1,:,:)*tt(2,:,:)*tt(3,:,:) - tt(6,:,:)*tt(7,:,:)
+!dvy/dty  = rho(v2v2) - b2b2 + ptot
+       gg(3,:,:) = tt(1,:,:)*tt(3,:,:)**2 - tt(7,:,:)**2 + ptot(:,:)
+!dvz/dty  = rho(v3v2) - b2b3
+!       gg(4,:,:) = tt(1,:,:)*tt(4,:,:))*tt(3,:,:) - tt(6,:,:)*tt(8,:,:)
+!de/dty   = (e+ptot)v2 - b2(b.v)
+       gg(5,:,:) = (etot(:,:)+ptot(:,:)) * tt(3,:,:) - tt(7,:,:)*bdotv
+!dbx/dty  = -(v1b2-v2b1)
+       gg(6,:,:) = -(tt(2,:,:)*tt(7,:,:) - tt(3,:,:)*tt(6,:,:))
+!dby/dty  = 0
+       gg(7,:,:) = 0
+!dbz/dtz  = v2b3-v3b2
+!      gg(8,:,:) = tt(3,:,:)*tt(8,:,:) - tt(4,:,:)*tt(7,:,:)
+
+
+!Flux in z direction, hh. left blank for now but easily inserted
+
+      end
+!-------------------------------------------------------------
+      Subroutine extrap
+      include 'nonlinp.inc'
+Cupdate the dummy points at the l=lt+1,m=0, m=mt+1 edges:
+C use quadratic extrapolant
+C remember that the time-dept bc are set by driving term
+       do m=0,mt
+        do i = 1,8
+Cl=lt+1 case:
+         uu(i,0,lt+1,m)=uu(i,0,lt-2,m)+3.d0*uu(i,0,lt,m)
+     & -3.d0*uu(i,0,lt-1,m)
+        end do                              
+       end do
+C l = 0 case
+      do m=0,mt
+       do i = 1,8
+        uu(i,0,0,m)=uu(i,0,3,m)+3.d0*uu(i,0,1,m)-3.d0*uu(i,0,2,m)
+       end do
+      end do
+C m=0 case:
+       do l=1,lt
+        do i = 1,8
+         uu(i,0,l,0)=uu(i,0,l,3)+3.d0*uu(i,0,l,1)-3.d0*uu(i,0,l,2)
+        end do
+       end do
+
+C finally, the dummy points at the far end: m=mt+1
+       do l=1,lt
+        do i = 1,8
+        uu(i,0,l,mt+1)=uu(i,0,l,mt-2)+3.d0*uu(i,0,l,mt)
+     & -3.d0*uu(i,0,l,mt-1)
+        end do
+       end do
+
+
+
+
+
+
+
+        end       
+!---------------------------------------------------------
+      Subroutine ritout(uu)
+       
+      Include 'nonlinp.inc'
+!This routine writes out the current data, for 3-d will be 2d-slices through the data.
+
+          
+
+       end
+!------------------------------------------------------------
+
+      Subroutine wrapup
+       
+      Include 'nonlinp.inc'
+!this routine wraps up the code, it will likely do nothing, can be used to output current timestep to be used as input for a new run.
+
+
+      end
+      
+!now for the functions      
+!--------------------------------------------------------------
+      subroutine press(tt)
+      Include 'nonlinp.inc'
+
+
+!magnetic pressure 
+      pb(:,:) = dsqrt(tt(6,:,:)**2+tt(7,:,:)**2)/(2.0d0 * u0)
+!total 
+      ptot(:,:) = 1.0d0*tt(1,:,:) + pb
+
+! this is representing the equation as ptot = P + B^2/2u0
+! it is of interest how this can be adjusted, P can be a tensor with cross terms, here it is just listed as a scalar. I am unsure how toa djust this equation without introducing thermodynamics.
+! the gas part of the pressure comes from P = nRT/v with T/V/R all held constant, the scaling factor should be adjusted from 1.0d0 to a physical number/
+      end
+
+!-------------------------------------------------------------    
+      subroutine energy(tt)
+      Include 'nonlinp.inc'
+
+!this function can actually possibly hold some scope for change, energy can also include internal energy, allowing this function to attempt to conserve internal energy from ionization, just a thought;. For now internal energy is of course constant.
+
+! E = rho*e + 0.5*rho*v^2 + b^2/2u0
+
+       etot(:,:) = tt(1,:,:)*eint + 
+     & 0.5d0*tt(1,:,:)*dsqrt(tt(2,:,:)**2 + tt(3,:,:)**2) 
+     & + dsqrt(tt(6,:,:)**2+tt(7,:,:)**2)/(2.0d0 * u0)   
+
+
+       end
+
+     
+
+      

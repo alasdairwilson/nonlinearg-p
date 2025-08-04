@@ -1,0 +1,11 @@
+program test
+
+integer, parameter :: dp = selected_real_kind(15, 307)
+real(kind=dp) :: a
+real(dp)      :: b
+double precision :: c
+
+
+print*, dp,kind(a),kind(b),kind(c)
+
+end program

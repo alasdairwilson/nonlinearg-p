@@ -1,0 +1,26 @@
+module GPU_ops
+  contains
+  attributes(global) subroutine plasma_solve_d(uu,ff,gg,lmax,mmax,mu)
+  implicit none
+  real :: uu(:,:,:,:), ff(:,:,:,:), gg(:,:,:,:)
+  real, value :: mu
+  integer :: i,j,k
+  integer, value :: lmax,mmax
+!GPU Dimensions: x=l, y=m, z=equation number  
+!Next the lax predictor step itself we use t =  1 for the predicted half-step
+  i=(blockIdx%x-1)*blockDim%x+threadIdx%x
+  j=(blockIdx%y-1)*blockDim%y+threadIdx%y
+  k=threadIdx%z
+!check we are in bounds
+    if (i.lt.lmax.and.j.lt.mmax) then
+!NTERIOR POINTS ONLY - GOTTA GO FAST!
+      if (threadIdx%x.lt.blockDim%x.and.threadIdx%x.ge.1.and. & 
+	  threadIdx%y.lt.blockDim%y.and.threadIdx%y.ge.1.) then
+       uu(k,1,i,j) = 0.25d0*((uu(k,0,i+1,j) + uu(k,0,i-1,j) + uu(k,0,i,j+1) + uu(k,0,i,j-1))) - &
+	  0.25d0*mu*( ff(k,i+1,j) + gg(k,i,j+1) - ff(k,i-1,j) - gg(k,i,j-1))
+!leapfrog corrector step to update uu to the full timestep  
+       uu(k,2,i,j)  = uu(k,0,i,j) - 0.5d0*mu*(ff(k,i+1,j) - ff(k,i-1,j) + gg(k,i,j+1) - gg(k,i,j-1))
+       uu(k,0,i,j) = uu(k,2,i,j)
+      end if	     
+    end if
+  end subroutine plasma_ solve_d

@@ -1,0 +1,568 @@
+      Program nonlinp
+       
+      Include 'nonlinp.inc'
+
+! This program is a non-linear finite difference solver for use in numerical MHD. The program initialisies in initialise, has a finite difference solver in solve (which can be switched out to various schemes) and a function for calculation the flux functions in flux (in all 3 dimensions) for MHD. Data is written out by function ritout. The program is exited in wrapup. Initial plan is to write it in 3-d but with 3-d functionality disabled, to see how well it runs before tackling harder problems.
+!---------------------------------------------------------------
+!our variables in MHD are stored in tensor uu(*,-,-,-,-):
+! 1 - density
+! 2 - vx
+! 3 - vy
+! 4 - vz
+! 5 - energy
+! 6 - bx
+! 7 - by
+! 8 - bz
+
+
+!for the solve current time is indexed  second in uu(-,*,-,-,-)
+!0 - current, n
+!1 - predictor half step
+!2 - next, n+1
+
+!For 2d and 3d the dimensions are next in uu (-,-,*,*,*) for x,y,z respectively
+!---------------------------------------------------------------
+      call initialise
+      
+      call solve
+
+      call wrapup
+
+      end
+!---------------------------------------------------------------
+
+      Subroutine initialise
+       
+      Include 'nonlinp.inc'
+!   set handy constants  
+       u0 = 1.2566370614d-6
+       kb = 1.3806488d-5
+       kb =1.0d0
+       pi2 = 2.d0*dacos(-1.d0)
+       temp = 6.0d3
+       gamma=5.d0/3.d0
+
+       filnam(1)='plde .out'
+       filnam(2)='plwx .out'
+       filnam(3)='plwy .out'
+       filnam(4)='plwz .out'
+       filnam(5)='plen .out'
+       filnam(6)='plbx .out'
+       filnam(7)='plby .out'
+       filnam(8)='plbz .out'
+
+!First load in data from datin file.
+       open(10,file='nonlinp.in', status='old')
+
+       read(10,datin)
+       write(6,datin)
+           
+      do i=1,8
+       write(filnam(i)(5:5),'(a1)') code
+       open(20+i,file=filnam(i), status='unknown')
+       rewind(20+i)
+      end do
+
+       write(6,*) 'Input complete: ','lt=',lt,'mt=',mt
+
+!In this subroutine the matrices of initial values are created. Functionality to use input files for initial values should be added. For now they are set in this code.
+
+!check lt,mt don't exceed array dimensions
+      if(lt.ge.lmax) then
+       lt=lmax-1
+       print*,'Warning: lt reset to ',lt
+      end if
+       if(mt.ge.mmax) then
+       mt=mmax-1
+      print*,'Warning: mt reset to ',mt
+      end if
+
+      ! E0 = et + eb
+
+! E0/B0^2 = 1/2 * [ beta / gamma-1 + 1 ]
+
+        eobo2 = 0.5d0 * ( beta/(gamma-1) + 1 )
+!for the plasma
+   
+
+
+!everything set to 0
+        do i =  1,8
+         uu(i,:,:,:) = 0.0d0
+        end do
+!initial conditions set next
+!density, sensible to set rho = 1, ie the density is equal to the normalized density everywhere, density gradients can be included.
+
+         uu(1,:,:,:) = 1.0d0
+!velocities set to 0 initially.
+
+!Bx = 
+
+        uu(6,:,:,:) = 1.0d0  
+!internal energy per unit mass (function of temperature)
+        eint(:,:)   = 1.0d0
+        
+
+!Very important to ensure that initial values are consistent with the chosen plasma parameters (b0 v0 E0 Beta etc.)
+!       beta is read in but our other normalization constant E0/B0^2 is a function of beta.
+
+
+
+      open(101,file='spbomb.in', status='old')
+      do l=1,lt
+      read(101,101)(spbomb(l,m),m=1,mt)
+      end do
+
+      do i = 0,2     
+        uu(1,i,1:lt,1:lt) = (1.0d0+1.d0*spbomb(1:lt,1:lt))
+      end do
+
+
+!MUST DO ENERGY LAST, IT DEPENDS ON THE OTHER INTIAL VALUES
+!setting the energy density is subtle E = Ek + Eb + Et, sum of the contributions from kinetic energy and magnetic pressure are easy but the last term, the gas pressure where p = (gamma-1)(density*energyperunitmass) requires assumptions. The simplest is that the temperature is constant and therefore the pressure is proportional to the density:
+
+!if we assume that E0 = Eb+Ethermal then it is easy to express E as E0+Ek
+       ek(:,:) = 0.5d0*(uu(1,0,:,:)*((uu(2,0,:,:)+uu(3,0,:,:))
+     & /uu(1,0,:,:)))**2     
+
+       et = (beta/(2d0*(gamma-1)))*uu(1,0,:,:)*eint(:,:)
+
+       eb = 0.5d0*(uu(6,0,:,:)**2+uu(7,0,:,:)**2)
+
+       etot(:,:) = 1/(eobo2)*(ek + et + eb)
+       
+
+       uu(5,0,:,:) = etot(:,:)
+
+
+
+      
+       
+! E = (B0^2/2*E0) * [ 0.5rho v^2 + rho e + 0.5B^2]
+
+
+    
+
+101   format(300f6.4)  
+      
+      
+        
+      call ritout(0)
+
+
+      end
+
+!--------------------------------------------------------------
+
+      Subroutine Solve
+       
+      Include 'nonlinp.inc'
+!This subroutine contains the finite difference solver. The richtmyer two-step scheme in 3 dimensions is used, this can be swapped out for any scheme that also only requires the flux functions, call the flux functions.
+
+      do n = 1,nt
+    
+       call driver(n)
+!looping over timesteps
+
+!first the predictor lax step.
+!calculate flux functions for all l,m at t = n
+!not sure if necessary but set temp array to be current step, will reuse for corrector step, can also write two flux functions accessing different time indices of uu will see.
+      tt(:,:,:) =  uu(:,0,:,:)
+
+      call flux(tt)
+!Next the lax predictor step itself we use t =  1 for the predicted half-step
+
+      do i = 1,8
+!loop the variables and spatial dimensions
+	do l = 1,lt
+	  do m = 1, mt
+	lp = l + 1
+	lm = l - 1
+        mp = m + 1
+        mm = m - 1
+
+        uu(i,1,l,m) = 0.25d0*((uu(i,0,lp,m) + uu(i,0,lm,m) +
+     & uu(i,0,l,mp) + uu(i,0,l,mm))) -
+     & 0.25d0*mu*( ff(i,lp,m) + gg(i,l,mp) - ff(i,lm,m) - gg(i,l,mm))
+             
+           end do
+         end do   
+       end do
+   
+
+!call the flux function  on the half timestep 
+
+      tt(:,:,:) =  uu(:,1,:,:)
+      print*,tt(1:8,95,95)
+      call extrap(tt)
+     
+
+!next the leapfrog corrector step to update uu to the full timestep  
+      do i = 1,8
+!loop the variables and spatial dimensions
+	do l = 1,lt
+	  do m = 1, mt
+	lp = l + 1
+	lm = l - 1
+        mp = m + 1
+        mm = m - 1
+
+         uu(i,2,l,m)  = uu(i,0,l,m) - 0.5d0*mu*(ff(i,lp,m) - 
+     & ff(i,lm,m) + gg(i,l,mp) - gg(i,l,mm))
+          end do
+        end do
+       end do
+! next we copy the new timestep to the current in order for us to start over again. 
+       tt(:,:,:) =  uu(:,2,:,:)
+       call extrap(tt)
+!        print*, uu(1,2,100,100), uu(6,2,100,1), uu(7,2,100,100)
+       uu(:,0,:,:) = tt(:,:,:)
+
+
+       
+      
+
+!output every nprint steps
+
+      if(mod(n,nprint).eq.0) call ritout(n)
+
+      
+      end do
+      end
+!-------------------------------------------------------------
+
+      Subroutine Flux(tt)
+       
+      Include 'nonlinp.inc'
+!This subroutines calculates (up to 3) flux functions based on the suuplied values of uu.
+!F = x
+!G = y
+!H = z if needed
+      
+
+!first calculate energy pressure and v.b for use in the flux functions.
+       call press(tt)
+ 
+       bdotv(:,:)= tt(2,:,:)*tt(6,:,:) + tt(3,:,:)*tt(7,:,:)
+       
+!The flux functions for ideal MHD:
+
+! Flux in x direction, ff. third dimension commented out for now.
+! drho/dtx = rho * dvx  /dx
+       ff(1,:,:) = tt(2,:,:)
+!dvx/dtx = rho*vx^2 - bx^2 + Ptot /dx
+       ff(2,:,:) = (tt(2,:,:)**2/tt(1,:,:)) - tt(6,:,:)**2
+     &  + Ptot(:,:)
+!dvy/dtx = rho* vxvy - bxby
+       ff(3,:,:) =  tt(2,:,:)*tt(3,:,:)/tt(1,:,:) - tt(6,:,:)*tt(7,:,:)
+!dvz/dtx = rho*vxvz - bxbz
+!      ff(4,:,:) = tt(2,:,:)*tt(4,:,:)/tt(1,:,:)) - tt(6,:,:)*tt(8,:,:)
+       ff(4,:,:) = 0d0
+!dE/dtx  = (E+Ptot)vx - bx*(b.v)      
+       ff(5,:,:)=(1d0/eobo2)*((tt(5,:,:)+ptot(:,:))*tt(2,:,:)/tt(1,:,:) 
+     & - tt(6,:,:)*bdotv(:,:))
+!dbx/dtx = 0
+       ff(6,:,:) = 0
+!dby/dtx = vxby - vybx
+       ff(7,:,:) =(tt(2,:,:)*tt(7,:,:)- tt(3,:,:)*tt(6,:,:))/tt(1,:,:)
+!dbz/dtx = -(vybz - vzby)
+!      ff(8,:,:) = -(tt(3,:,:)*tt(8,:,:) - t(4,:,:)*tt(7,:,:))/tt(1,:,:)
+       ff(8,:,:)  = 0
+
+!Flux in the Y direction, gg. z terms commented out for now 
+
+!drho/dty =  rho*vy
+       gg(1,:,:) = tt(3,:,:)
+!dvx/dty  = rho(v1v2) - b1b2
+       gg(2,:,:) = tt(2,:,:)*tt(3,:,:)/tt(1,:,:) - tt(6,:,:)*tt(7,:,:)
+!dvy/dty  = rho(v2v2) - b2b2 + ptot
+       gg(3,:,:) = (tt(3,:,:)**2)/tt(1,:,:) - tt(7,:,:)**2 + ptot(:,:)
+!dvz/dty  = rho(v3v2) - b2b3
+!       gg(4,:,:) = tt(4,:,:))*tt(3,:,:)/tt(1,:,:) - tt(6,:,:)*tt(8,:,:)
+       gg(4,:,:) = 0
+!de/dty   = (e+ptot)v2 - b2(b.v)
+       gg(5,:,:) =(1/eobo2)*((tt(5,:,:)+ptot(:,:))*tt(3,:,:)/tt(1,:,:)
+     &  - tt(7,:,:)*bdotv(:,:))
+!dbx/dty  = -(v1b2-v2b1)
+       gg(6,:,:) = -(tt(2,:,:)*tt(7,:,:) - tt(3,:,:)*
+     & tt(6,:,:))/tt(1,:,:)
+!dby/dty  = 0
+       gg(7,:,:) = 0
+!dbz/dtz  = v2b3-v3b2
+!      gg(8,:,:) = (tt(3,:,:)*tt(8,:,:) - tt(4,:,:)*tt(7,:,:))/tt(1,:,:)
+       gg(8,:,:)  = 0
+
+!Flux in z direction, hh. left blank for now but easily inserted
+
+      end
+!-------------------------------------------------------------
+!--------------------------------------------------------------
+      subroutine press(tt)
+      Include 'nonlinp.inc'
+
+
+!magnetic energy density 
+      pb(:,:) = 0.5d0*(tt(6,:,:)**2+tt(7,:,:)**2)
+!kinetic energy density
+      ek(:,:) = 0.5d0 * tt(1,:,:) * ((tt(2,:,:)/tt(1,:,:))**2+
+     & (tt(3,:,:)/tt(1,:,:))**2)
+!internal energy density
+      eint(:,:) = tt(5,:,:)-0.5*pb(:,:)-ek(:,:) 
+!note that eint is really eint*rho but you never need the true value of e anyway
+      ptot(:,:) =  0.5*(beta*(gamma-1)*eint(:,:)+2.d0*pb(:,:))
+! this is representing the equation as 
+! it is of interest how this can be adjusted, P can be a tensor with cross terms, here it is just listed as a scalar. 
+! the gas part of the pressure comes from P = nRT/v, eint is really proportional to T and since density is known and V is held constant pressure can be worked out using p = (gamma-1) * (rho*eint)   eint is proportional to RT. 
+      end
+!----------------------------------------------------------
+
+      Subroutine extrap(tt)
+      include 'nonlinp.inc'
+Cupdate the dummy points at the l=lt+1,m=0, m=mt+1 edges:
+C use quadratic extrapolant
+
+       do m=1,mt
+        do i = 1,8
+Cl=lt+1 case:
+         tt(i,lt+1,m)=tt(i,lt-2,m)+3.d0*tt(i,lt,m)
+     & -3.d0*tt(i,lt-1,m)
+        end do                              
+       end do
+C l = 0 case
+      do m=1,mt
+       do i = 1,8
+        tt(i,0,m)=tt(i,3,m)+3.d0*tt(i,1,m)-3.d0*tt(i,2,m)
+       end do
+      end do
+C m=0 case:
+       do l=1,lt
+        do i = 1,8
+         tt(i,l,0)=tt(i,l,3)+3.d0*tt(i,l,1)-3.d0*tt(i,l,2)
+        end do
+       end do
+
+C finally, the dummy points at the far end: m=mt+1
+       do l=1,lt
+        do i = 1,8
+        tt(i,l,mt+1)=tt(i,l,mt-2)+3.d0*tt(i,l,mt)
+     & -3.d0*tt(i,l,mt-1)
+        end do
+       end do
+
+! !!~~~~~~~~~~~FIXED BOUNDARIES~~~~~~~~~~~
+!        do m=1,mt
+!         do i = 1,8
+! Cl=lt+1 case:
+!          tt(i,lt+1,m)=1.d0
+!         end do                              
+!        end do
+! C l = 0 case
+! !       do m=1,mt
+! !        do i = 1,8
+! !         tt(i,0,m)=1.d0
+! !        end do
+! !       end do
+! C m=0 case:
+!        do l=1,lt
+!         do i = 1,8
+!          tt(i,l,0)=1.d0
+!         end do
+!        end do
+! 
+! C finally, the dummy points at the far end: m=mt+1
+!        do l=1,lt
+!         do i = 1,8
+!         tt(i,l,mt+1)=1.d0
+!         end do
+!        end do
+
+
+
+
+        end       
+!---------------------------------------------------------
+        Subroutine driver(n)
+        Include 'nonlinp.inc'
+
+*** this code segment is for a driver that acts on the top driving gas density waves *against the *magnetic field direction
+* overwrite any time-dependent boundary conditions:
+
+
+!        do m=m1,m2
+! 
+! * first the harmonic driver term..now we're driving perturbations against the magnetic
+! * field direction, that is, perturbations down the edge
+! ***>><<
+!         zterm=dcos(dble(n-1)*pi2*fr/dble(1+nt))
+!         mdiff=m2-m1
+!         msum=m2+m1
+! 
+! 
+! * next the spatial structure in the z (or m) direction, with gaussian
+! * envelope to smooth gradients
+! *** we have a set of possibilities: either discrete sources, or a standing wave
+!         xterm=(dsin(dble(m2-m)*pi2*kx/dble(mdiff))
+!      &   +dabs(dsin(dble(m2-m)*pi2*kx/dble(mdiff))))
+!      &   *dexp(-decx*(m-msum/2)**2)
+! 
+!    
+! 
+!           uu(1,0,0,m)=pdens+damp*pdens*zterm*xterm*dexp(-dect*(n-noff))
+!           uu(1,1,0,m)=pdens+damp*pdens*zterm*xterm*dexp(-dect*(n-noff))
+! !           uu(1,1,0,m)=1.d0+damp*zterm*xterm*dexp(-dect*(n-noff))
+! 
+!         end do
+        
+!         do m = 1,m1-1
+!            uu(1,0,0,m)=1.d0
+! 	end do
+! 
+!          do m = m2+1,mt
+!            uu(1,0,0,m)=1.d0
+! 	 end do
+
+! *have the disturbance last time noff can later add some kind of decay term both in x and *in t
+! 
+!         if (time.lt.noff) then
+! 
+! ! *decay can be used for an envelope which evolves wrt t, x,z, etc.
+! ! *offset is the time between the central time and the current time
+!          ncentre = noff/2
+!          offset = abs(dble(time)-dble(ncentre))
+!          decay = exp(-dble(offset)/dble(decx))
+! 
+!          print*, 'driving' ,decay
+! ! *use prescribed points ie manually read in values for each point that we have decided lies on the
+! ! *first points at 90 degrees have no mix of velocities, either all vx or vz
+!          uu(2,0,97,100)  =-wamp*decay
+!          uu(3,0,100,103) =wamp*decay
+!          uu(2,0,103,100) =wamp*decay
+!          uu(3,0,100,97)  =-wamp*decay
+! ! *points at other angles are more complicated involve max of changes on vx and vz
+!          uu(2,0,97,101) = -0.9487*wamp*decay
+!          uu(3,0,97,101) = 0.3163*wamp*decay
+!  
+!          uu(2,0,97,99) = -0.9487*wamp*decay
+!          uu(3,0,97,99) = -0.3163*wamp*decay
+! 
+!          uu(2,0,99,103) = -0.3163*wamp*decay
+!          uu(3,0,99,103) = 0.9487*wamp*decay
+! 
+!          uu(2,0,101,103) = 0.3163*wamp*decay
+!          uu(3,0,101,103) = 0.9487*wamp*decay
+! 
+!          uu(2,0,103,101) = 0.9487*wamp*decay
+!          uu(3,0,103,101) = 0.3163*wamp*decay
+! 
+!          uu(2,0,103,99)  = 0.9487*wamp*decay
+!          uu(3,0,103,99)  =-0.3163*wamp*decay
+! 
+!          uu(2,0,101,97)  = 0.3163*wamp*decay
+!          uu(3,0,101,97)  =-0.9487*wamp*decay
+! 
+!          uu(2,0,99,97)   =-0.3163*wamp*decay
+!          uu(3,0,99,97)   =-0.9487*wamp*decay
+! ! *finally the 45 degree points these mix equally between x and z
+!          uu(2,0,98,102)  = -0.7071*wamp*decay
+!          uu(3,0,98,102)  =  0.7071*wamp*decay
+!  
+!          uu(2,0,102,102)  = 0.7071*wamp*decay
+!          uu(3,0,102,102)  = 0.7071*wamp*decay
+!         
+!          uu(2,0,102,98)  =  0.7071*wamp*decay
+!          uu(3,0,102,98)  = -0.7071*wamp*decay
+!     
+!          uu(2,0,98,98)  = -0.7071*wamp*decay
+!          uu(3,0,98,98)  = -0.7071*wamp*decay
+!         end if
+!       
+! 
+! 
+! 
+
+      end
+
+
+!----------------------------------------------------------
+      Subroutine ritout(n)
+       
+      Include 'nonlinp.inc'
+!This routine writes out the current data, for 3-d will be 2d-slices through the data.
+
+      print*, 'Timestep =', n
+
+
+      write(21,*)'# timestep = ',n
+      do l=1,lt
+       write(21,100)((uu(1,0,l,m)),m=1,mt)
+      end do
+      write(21,*)
+      write(21,*)
+
+      write(22,*)'# timestep = ',n
+      do l=1,lt
+      write(22,100)(uu(2,0,l,m),m=1,mt)
+      end do
+      write(22,*)
+      write(22,*)
+
+      write(23,*)'# timestep = ',n
+      do l=1,lt
+      write(23,100)(uu(3,0,l,m),m=1,mt)
+      end do
+      write(23,*)
+      write(23,*)
+
+!       write(24,*)'# timestep = ',n
+!       do l=1,lt
+!       write(24,100)(uu(4,0,l,m),m=1,mt)
+!       end do
+!       write(24,*)
+!       write(24,*)
+
+      write(25,*)'# timestep = ',n
+      do l=1,lt
+      write(25,100)(uu(5,0,l,m),m=1,mt)
+      end do
+      write(25,*)
+      write(25,*)
+
+      write(26,*)'# timestep = ',n
+      do l=1,lt
+      write(26,100)(uu(6,0,l,m),m=1,mt)
+      end do
+      write(26,*)
+      write(26,*)
+
+      write(27,*)'# timestep = ',n
+      do l=1,lt
+      write(27,100)(uu(7,0,l,m),m=1,mt)
+      end do
+      write(27,*)
+      write(27,*)
+  
+      write(28,*)'# timestep = ',n
+      do l=1,lt
+      write(28,100)(uu(8,0,l,m),m=1,mt)
+      end do
+      write(28,*)
+      write(28,*)
+          
+100   format(300g14.5)
+
+
+      end
+!------------------------------------------------------------
+
+      Subroutine wrapup
+       
+      Include 'nonlinp.inc'
+!this routine wraps up the code, it will likely do nothing, can be used to output current timestep to be used as input for a new run.
+
+
+      end
+      
+!now for the functions      
+
+
+!-------------------------------------------------------------    

@@ -1,0 +1,11 @@
+&datin
+lt=201 mt=199 nt=250 nprint=25 mu=0.25d0 
+
+nr=1 noff = 1000 wamp = 0.5d0 damp = 0.01d0 kx=0.5d0 fr=1.0d0 decx=0.1d0 dect=0.0d0 m1=10  m2=20 
+
+code = 'b'
+
+beta = 1.d0 dpodg = 1.d0 frac = 0.01d0 bxo=1.d0 byo=0.d0
+/
+
+

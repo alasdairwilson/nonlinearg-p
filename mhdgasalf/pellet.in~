@@ -1,0 +1,15 @@
+&datin
+lt=400 mt=400 nt=3000 nprint=50 mu=0.1d0 
+
+nr=1 noff = 500 wamp = 0.5d0 damp = 0.1d0 kx=0.5d0 fr=1.00d0 decx=5.d-3 dect=0.0d0 m1=1  m2=199 
+
+pelletrate = 1.d-3
+
+code = 'b' fdamp = 'sigma200.in'
+
+boundmin = 1.0d-7
+
+beta = 1.d0 dpodg = 1.d0 frac = 0.01d0 bxo=1.d0 byo=0.d0
+/
+
+
