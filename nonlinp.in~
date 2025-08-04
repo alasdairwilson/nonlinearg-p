@@ -1,7 +1,0 @@
-&datin
-lt=200 mt=200 nt=250 nprint=10 mu=0.025d0 nr=1 noff = 50 wamp = 0.5d0 
-damp = 0.0d0 kx=0.5d0 fr=8.6d0 decx=2.d-3 dect=0.0d0 m1=40  m2=160 code = 'b'
-beta = 10.0d0
-/
-
-
